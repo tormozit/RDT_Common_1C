@@ -18,9 +18,11 @@
 #include "Shlobj.h"
 #include <string>
 
+// https://habrahabr.ru/post/191014/
 #define TIME_LEN 34
-#define ePropLast 0
-#define eMethLast 5 // Количество методов
+#define ePropLast 0 // !!! Количество свойств !!!
+#define eMethLast 6 // !!! Количество методов !!!
+
 #define eMethSleep 0
 #define eMethPID 1
 #define eMethIsAdmin 2
@@ -233,7 +235,7 @@ long CAddInNative::GetNParams(const long lMethodNum)
 	case eMethMoveWindowToCaretPos:
 		return 0;
 	case eMethRun:
-		return 3;
+		return 5;
 	default:
         return 0;
     }
@@ -263,6 +265,9 @@ bool CAddInNative::GetParamDefValue(const long lMethodNum, const long lParamNum,
 	case eMethMoveWindowToCaretPos:
 		// There are no parameter values by default 
 		break;	
+	case eMethRun:
+		// There are no parameter values by default 
+		break;
 	default:
         return false;
     }
@@ -374,16 +379,34 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 	case eMethRun:
 		if (lSizeArray)
 		{
-			LPCWSTR Command = TV_WSTR(paParams);
-			BOOL WaitForComplete = TV_BOOL(paParams);
-			BOOL AdminMode = TV_BOOL(paParams);
-			if (std::wcslen(Command) > 0)
+			LPCWSTR ExeFilename = (paParams)->pwstrVal;
+			LPCWSTR ExeParams = (paParams + 1)->pwstrVal;
+			LPCWSTR CurrentDirectory = (paParams + 2)->pwstrVal;
+			BOOL WaitForComplete = (paParams + 3)->bVal;
+			BOOL AdminMode = (paParams + 4)->bVal;
+			if (std::wcslen(ExeFilename) > 0)
 			{
 				wchar_t* param2 = 0;
 				if (AdminMode)
 					convToShortWchar(&param2, L"runas");
-
-				ShellExecute(NULL, param2, Command, NULL, NULL, SW_SHOWNORMAL);
+				SHELLEXECUTEINFO shExInfo = { 0 };
+				shExInfo.cbSize = sizeof(shExInfo);
+				shExInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+				shExInfo.hwnd = 0;
+				shExInfo.lpVerb = param2; 
+				shExInfo.lpFile = ExeFilename;
+				shExInfo.lpParameters = ExeParams;
+				shExInfo.lpDirectory = CurrentDirectory;
+				shExInfo.nShow = SW_HIDE;
+				shExInfo.hInstApp = 0;
+				if (ShellExecuteEx(&shExInfo))
+				{
+					if (WaitForComplete)
+					{
+						WaitForSingleObject(shExInfo.hProcess, INFINITE);
+						CloseHandle(shExInfo.hProcess);
+					}
+				}
 				return true;
 			}
 			else
@@ -391,7 +414,6 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 		}
 		else
 			return false;
-		return true;
     default:
         return false;
     }
@@ -417,6 +439,7 @@ bool CAddInNative::CallAsFunc(const long lMethodNum,
 		return true;
 	case eMethIsAdmin:
 		pvarRetValue->bVal = IsUserAnAdmin();
+		pvarRetValue->vt = VTYPE_BOOL;
 		return true;
 	default:
 		return false;
