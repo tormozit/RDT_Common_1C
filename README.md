@@ -6,3 +6,4 @@
     GetCaretPos() - запоминает позицию каретки
     MoveWindowToCaretPos() - перемещает левый верхний угол окна в запомненную позицию каретки
     Run(Строка ИсполняемыйФайл, Строка ПараметрыЗапуска, Строка ТекущийКаталог, Булево ОжидатьЗавершения, Булево Элевация) - выполняет команду системы
+http://devtool1c.ucoz.ru/load/prochie/iskhodnyj_kod_vneshnej_komponenty_obshhego_naznachenija/2-1-0-13
