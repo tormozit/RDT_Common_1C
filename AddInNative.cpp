@@ -331,14 +331,15 @@ void MoveWindowToCaret()
 		GetWindowRect(hWindow, &rect);
 		int WindowWidth = rect.right - rect.left;
 		int WindowHeight = rect.bottom - rect.top;
-		int maxLeft = GetSystemMetrics(SM_CXVIRTUALSCREEN) - WindowWidth;
-		int maxTop = GetSystemMetrics(SM_CYVIRTUALSCREEN) - WindowHeight - 30;
 		int NewLeft;
 		int NewTop;
-		if (CaretTop + 1 > maxTop)
-			NewTop = maxTop;
-		else
+		// ѕоднимать окно вредно дл€ подсказок в коде
+		//int maxTop = GetSystemMetrics(SM_CYVIRTUALSCREEN) - WindowHeight - 30;
+		//if (CaretTop + 1 > maxTop)
+		//	NewTop = maxTop;
+		//else
 			NewTop = CaretTop + 1;
+		int maxLeft = GetSystemMetrics(SM_CXVIRTUALSCREEN) - WindowWidth;
 		if (CaretLeft > maxLeft)
 			NewLeft = maxLeft;
 		else
