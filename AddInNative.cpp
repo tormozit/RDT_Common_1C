@@ -23,11 +23,11 @@
 #define ePropLast 0 // !!! Количество свойств !!!
 #define eMethLast 6 // !!! Количество методов !!!
 
-#define eMethSleep 0
+#define eMethSleep 0 // (КоличествоМилисекунд)
 #define eMethPID 1
 #define eMethIsAdmin 2
 #define eMethGetCaretPos 3
-#define eMethMoveWindowToCaretPos 4
+#define eMethMoveWindowToCaretPos 4 // (РазрешитьВыходЗаПределыЭкрана)
 #define eMethRun 5
 
 #define BASE_ERRNO     7
@@ -233,7 +233,7 @@ long CAddInNative::GetNParams(const long lMethodNum)
 	case eMethGetCaretPos:
 		return 0;
 	case eMethMoveWindowToCaretPos:
-		return 0;
+		return 1;
 	case eMethRun:
 		return 5;
 	default:
@@ -322,7 +322,7 @@ void StoreCaretPos()
 	}
 }
 
-void MoveWindowToCaret()
+void MoveWindowToCaret(bool AllowOutScreen)
 {
 	if (CaretTop > 0)
 	{
@@ -333,11 +333,10 @@ void MoveWindowToCaret()
 		int WindowHeight = rect.bottom - rect.top;
 		int NewLeft;
 		int NewTop;
-		// Поднимать окно вредно для подсказок в коде
-		//int maxTop = GetSystemMetrics(SM_CYVIRTUALSCREEN) - WindowHeight - 30;
-		//if (CaretTop + 1 > maxTop)
-		//	NewTop = maxTop;
-		//else
+		int maxTop = GetSystemMetrics(SM_CYVIRTUALSCREEN) - WindowHeight - 30;
+		if (!AllowOutScreen && CaretTop + 1 > maxTop)
+			NewTop = maxTop;
+		else
 			NewTop = CaretTop + 1;
 		int maxLeft = GetSystemMetrics(SM_CXVIRTUALSCREEN) - WindowWidth;
 		if (CaretLeft > maxLeft)
@@ -375,7 +374,13 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 		StoreCaretPos();
 		return true;
 	case eMethMoveWindowToCaretPos:
-		MoveWindowToCaret();
+		bool AllowOutScreen;
+		AllowOutScreen = false;
+		if (lSizeArray)
+		{
+			AllowOutScreen = TV_BOOL(paParams);
+		}
+		MoveWindowToCaret(AllowOutScreen);
 		return true;
 	case eMethRun:
 		if (lSizeArray)
