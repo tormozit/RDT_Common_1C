@@ -231,7 +231,7 @@ long CAddInNative::GetNParams(const long lMethodNum)
 	case eMethIsAdmin:
 		return 0;
 	case eMethGetCaretPos:
-		return 0;
+		return 2;
 	case eMethMoveWindowToCaretPos:
 		return 1;
 	case eMethRun:
@@ -296,7 +296,7 @@ bool CAddInNative::HasRetVal(const long lMethodNum)
     }
 }
 
-void StoreCaretPos()
+void StoreCaretPos(int xOffset, int yOffset)
 {
 	// http://stackoverflow.com/questions/31055249/is-it-possible-to-get-caret-position-in-word-to-update-faster
 	HWND hWindow = NULL;
@@ -309,6 +309,8 @@ void StoreCaretPos()
 	point.y = 0;
 	GUITHREADINFO guiInfo;
 	guiInfo.cbSize = sizeof(GUITHREADINFO);
+	CaretLeft = 0;
+	CaretTop = 0;
 	if (GetGUIThreadInfo(remoteThreadId, &guiInfo))
 	{
 		ClientToScreen(guiInfo.hwndCaret, &point);
@@ -320,6 +322,8 @@ void StoreCaretPos()
 			CaretTop = guiInfo.rcCaret.bottom + point.y;
 		}
 	}
+	CaretLeft += xOffset;
+	CaretTop += yOffset;
 }
 
 void MoveWindowToCaret(bool AllowOutScreen)
@@ -371,7 +375,15 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 		else
 			return false;
 	case eMethGetCaretPos:
-		StoreCaretPos();
+		int yOffset, xOffset;
+		yOffset = 0;
+		xOffset = 0;
+		if (lSizeArray)
+		{
+			xOffset = TV_INT(paParams);
+			yOffset = TV_INT(paParams + 1);
+		}		
+		StoreCaretPos(xOffset, yOffset);
 		return true;
 	case eMethMoveWindowToCaretPos:
 		bool AllowOutScreen;
