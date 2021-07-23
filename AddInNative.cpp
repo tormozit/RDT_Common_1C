@@ -70,17 +70,6 @@ const WCHAR_T* GetClassNames()
 {
 	return s_names;
 }
-//---------------------------------------------------------------------------//
-#ifndef __linux__
-VOID CALLBACK MyTimerProc(
-        HWND hwnd, // handle of window for timer messages
-        UINT uMsg, // WM_TIMER message
-        UINT idEvent, // timer identifier
-        DWORD dwTime // current system time
-);
-#else
-static void MyTimerProc(int sig);
-#endif //__linux__
 
 // CAddInNative
 //---------------------------------------------------------------------------//
