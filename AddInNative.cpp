@@ -43,6 +43,7 @@ int CaretTop = 0;
 uint32_t convToShortWchar(WCHAR_T** Dest, const wchar_t* Source, uint32_t len = 0);
 uint32_t convFromShortWchar(wchar_t** Dest, const WCHAR_T* Source, uint32_t len = 0);
 uint32_t getLenShortWcharStr(const WCHAR_T* Source);
+static WcharWrapper s_names(g_kClassNames);
 
 //---------------------------------------------------------------------------//
 long GetClassObject(const WCHAR_T* wsName, IComponentBase** pInterface)
@@ -67,10 +68,7 @@ long DestroyObject(IComponentBase** pIntf)
 //---------------------------------------------------------------------------//
 const WCHAR_T* GetClassNames()
 {
-    static WCHAR_T* names = 0;
-    if (!names)
-        ::convToShortWchar(&names, g_kClassNames);
-    return names;
+	return s_names;
 }
 //---------------------------------------------------------------------------//
 #ifndef __linux__
@@ -483,59 +481,6 @@ bool CAddInNative::CallAsFunc(const long lMethodNum,
 //}
 
 //---------------------------------------------------------------------------//
-// This code will work only on the client!
-#ifndef __linux__
-VOID CALLBACK MyTimerProc(
-  HWND hwnd,    // handle of window for timer messages
-  UINT uMsg,    // WM_TIMER message
-  UINT idEvent, // timer identifier
-  DWORD dwTime  // current system time
-)
-{
-    if (!pAsyncEvent)
-        return;
-
-    wchar_t *who = L"ComponentNative", *what = L"Timer";
-
-    wchar_t *wstime = new wchar_t[TIME_LEN];
-    if (wstime)
-    {
-        wmemset(wstime, 0, TIME_LEN);
-        ::_ultow(dwTime, wstime, 10);
-        pAsyncEvent->ExternalEvent(who, what, wstime);
-        delete[] wstime;
-    }
-}
-#else
-void MyTimerProc(int sig)
-{
-    if (pAsyncEvent)
-        return;
-
-    WCHAR_T *who = 0, *what = 0, *wdata = 0;
-    wchar_t *data = 0;
-    time_t dwTime = time(NULL);
-
-    data = new wchar_t[TIME_LEN];
-    
-    if (data)
-    {
-        wmemset(data, 0, TIME_LEN);
-        swprintf(data, TIME_LEN, L"%ul", dwTime);
-        ::convToShortWchar(&who, L"ComponentNative");
-        ::convToShortWchar(&what, L"Timer");
-        ::convToShortWchar(&wdata, data);
-
-        pAsyncEvent->ExternalEvent(who, what, wdata);
-
-        delete[] who;
-        delete[] what;
-        delete[] wdata;
-        delete[] data;
-    }
-}
-#endif
-//---------------------------------------------------------------------------//
 void CAddInNative::SetLocale(const WCHAR_T* loc)
 {
 #ifndef __linux__
@@ -642,5 +587,57 @@ uint32_t getLenShortWcharStr(const WCHAR_T* Source)
         ++res;
 
     return res;
+}
+//---------------------------------------------------------------------------//
+//---------------------------------------------------------------------------//
+
+#ifdef LINUX_OR_MACOS
+WcharWrapper::WcharWrapper(const WCHAR_T* str) : m_str_WCHAR(NULL),
+m_str_wchar(NULL)
+{
+	if (str)
+	{
+		int len = getLenShortWcharStr(str);
+		m_str_WCHAR = new WCHAR_T[len + 1];
+		memset(m_str_WCHAR, 0, sizeof(WCHAR_T) * (len + 1));
+		memcpy(m_str_WCHAR, str, sizeof(WCHAR_T) * len);
+		::convFromShortWchar(&m_str_wchar, m_str_WCHAR);
+	}
+}
+#endif
+//---------------------------------------------------------------------------//
+WcharWrapper::WcharWrapper(const wchar_t* str) :
+#ifdef LINUX_OR_MACOS
+	m_str_WCHAR(NULL),
+#endif 
+	m_str_wchar(NULL)
+{
+	if (str)
+	{
+		size_t len = wcslen(str);
+		m_str_wchar = new wchar_t[len + 1];
+		memset(m_str_wchar, 0, sizeof(wchar_t) * (len + 1));
+		memcpy(m_str_wchar, str, sizeof(wchar_t) * len);
+#ifdef LINUX_OR_MACOS
+		::convToShortWchar(&m_str_WCHAR, m_str_wchar);
+#endif
+	}
+
+}
+//---------------------------------------------------------------------------//
+WcharWrapper::~WcharWrapper()
+{
+#ifdef LINUX_OR_MACOS
+	if (m_str_WCHAR)
+	{
+		delete[] m_str_WCHAR;
+		m_str_WCHAR = NULL;
+	}
+#endif
+	if (m_str_wchar)
+	{
+		delete[] m_str_wchar;
+		m_str_wchar = NULL;
+	}
 }
 //---------------------------------------------------------------------------//
