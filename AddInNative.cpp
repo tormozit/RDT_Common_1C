@@ -220,7 +220,7 @@ long CAddInNative::GetNParams(const long lMethodNum)
 	case eMethGetCaretPos:
 		return 2;
 	case eMethMoveWindowToCaretPos:
-		return 1;
+		return 2;
 	case eMethRun:
 		return 5;
 	default:
@@ -303,7 +303,7 @@ void StoreCaretPos(int xOffset, int yOffset)
 		ClientToScreen(guiInfo.hwndCaret, &point);
 		CaretLeft = 0;
 		CaretTop = 0;
-		if (point.y > 0)
+		if (point.y >= 0)
 		{
 			CaretLeft = guiInfo.rcCaret.right + point.x;
 			CaretTop = guiInfo.rcCaret.bottom + point.y;
@@ -313,13 +313,13 @@ void StoreCaretPos(int xOffset, int yOffset)
 	CaretTop += yOffset;
 }
 
-void MoveWindowToCaret(bool AllowOutScreen)
+void MoveWindowToCaret(bool AllowOutScreen, bool MakeAlwaysOnTop)
 {
+	HWND hWindow = GetForegroundWindow();
+	RECT rect;
+	GetWindowRect(hWindow, &rect);
 	if (CaretTop > 0)
 	{
-		HWND hWindow = GetForegroundWindow();
-		RECT rect;
-		GetWindowRect(hWindow, &rect);
 		int WindowWidth = rect.right - rect.left;
 		int WindowHeight = rect.bottom - rect.top;
 		int NewLeft;
@@ -336,6 +336,8 @@ void MoveWindowToCaret(bool AllowOutScreen)
 			NewLeft = CaretLeft;
 		MoveWindow(hWindow, NewLeft, NewTop, WindowWidth, WindowHeight, true);
 	}
+	if (MakeAlwaysOnTop)
+		SetWindowPos(hWindow, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 }
 
 //---------------------------------------------------------------------------//
@@ -375,11 +377,14 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 	case eMethMoveWindowToCaretPos:
 		bool AllowOutScreen;
 		AllowOutScreen = false;
+		bool MakeAlwaysOnTop;
+		MakeAlwaysOnTop = false;
 		if (lSizeArray)
 		{
 			AllowOutScreen = TV_BOOL(paParams);
+			MakeAlwaysOnTop = TV_BOOL(paParams + 1);
 		}
-		MoveWindowToCaret(AllowOutScreen);
+		MoveWindowToCaret(AllowOutScreen, MakeAlwaysOnTop);
 		return true;
 	case eMethRun:
 		if (lSizeArray)
