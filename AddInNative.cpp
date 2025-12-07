@@ -345,6 +345,7 @@ void StoreCaretPos(int xOffset, int yOffset)
 // =========================================================================
 // НОВЫЙ МЕТОД: Использует UI Automation (для 8.5+)
 // НОВЫЙ МЕТОД: Использует UI Automation (для 8.5+)
+// НОВЫЙ МЕТОД: Использует UI Automation (для 8.5+)
 void StoreCaretPosUIA(int xOffset, int yOffset)
 {
 	if (pAutomation == NULL) {
@@ -357,14 +358,14 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 	IUIAutomationTextPattern *pTextPattern = NULL;
 	IUIAutomationTextRangeArray *pTextRangeArray = NULL;
 	IUIAutomationTextRange *pTextRange = NULL;
-
-	// Новая переменная для расширенного диапазона
 	IUIAutomationTextRange *pExpandedRange = NULL;
 
 	CaretLeft = 0;
 	CaretTop = 0;
 
-	// 1. Получаем элемент, находящийся в фокусе ввода
+	RECT docRect = { 0 }; // Bounding box самого Document-элемента для смещения
+
+						  // 1. Получаем элемент, находящийся в фокусе ввода
 	HRESULT hr = pAutomation->GetFocusedElement(&pFocusedElement);
 	if (FAILED(hr) || pFocusedElement == NULL) {
 		return;
@@ -376,6 +377,10 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 
 	if (controlType == UIA_DocumentControlTypeId)
 	{
+		// 2.1. Получаем экранные координаты Document-элемента
+		// Они будут использоваться как OFFSET, если GetBoundingRectangles вернет относительные координаты.
+		pFocusedElement->get_CurrentBoundingRectangle(&docRect);
+
 		// 3. Получаем TextPattern
 		hr = pFocusedElement->GetCurrentPatternAs(UIA_TextPatternId, __uuidof(IUIAutomationTextPattern), (void**)&pTextPattern);
 
@@ -398,14 +403,12 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 					{
 						// 5. РАБОТА С НУЛЕВЫМ ДИАПАЗОНОМ (КАРЕТКОЙ)
 
-						// Создаем копию диапазона, чтобы не менять оригинальный
+						// Создаем копию диапазона
 						pTextRange->Clone(&pExpandedRange);
 
 						if (pExpandedRange != NULL)
 						{
-							// Расширяем диапазон до ближайшего символа. 
-							// Это принудительно создает из нулевого диапазона диапазон с физическими границами.
-							// Используем TextUnit_Character, чтобы захватить координаты.
+							// Расширяем диапазон до ближайшего символа для получения физических границ
 							pExpandedRange->ExpandToEnclosingUnit(TextUnit_Character);
 
 							SAFEARRAY *rectArray = NULL;
@@ -419,9 +422,12 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 
 								if (SUCCEEDED(hr) && pRect != NULL)
 								{
-									// Читаем координаты (left, top, right, bottom)
-									CaretLeft = (int)pRect[0]; // left
-									CaretTop = (int)pRect[1]; // top
+									// pRect[0]=Left (относительно Document), pRect[3]=Bottom (относительно Document)
+
+									// *** КОРРЕКЦИЯ: Добавляем смещение Document-элемента ***
+									CaretLeft = (int)pRect[0]; // X-координата + смещение X документа
+									CaretTop = (int)pRect[3] + docRect.top;  // Y-координата (Bottom) + смещение Y документа
+
 									SafeArrayUnaccessData(rectArray);
 								}
 								SafeArrayDestroy(rectArray);
@@ -440,7 +446,7 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 	if (pTextPattern != NULL) pTextPattern->Release();
 	if (pFocusedElement != NULL) pFocusedElement->Release();
 
-	// Применяем смещения
+	// Применяем смещения, заданные пользователем
 	CaretLeft += xOffset;
 	CaretTop += yOffset;
 }
