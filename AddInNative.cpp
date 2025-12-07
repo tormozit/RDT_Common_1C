@@ -416,7 +416,26 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 					pExpandedRange->ExpandToEnclosingUnit(TextUnit_Character);
 					SAFEARRAY *rectArray = NULL;
 					hr = pExpandedRange->GetBoundingRectangles(&rectArray);
-					if (SUCCEEDED(hr) && rectArray != NULL && rectArray->rgsabound[0].cElements > 0)
+					bool success = SUCCEEDED(hr) && rectArray != NULL && rectArray->rgsabound[0].cElements > 0;
+					if (!success)
+					{
+						IUIAutomationTextRange *pFallbackRange = NULL;
+						// --- 2. FALLBACK: справа от последнего символа текста (cElements = 0) ---
+						pTextRange->Clone(&pFallbackRange);
+						if (pFallbackRange != NULL)
+						{
+							// Перемещаем начало диапазона на 1 символ назад (захватываем последний символ)
+							int actualMoved = 0;
+							hr = pFallbackRange->MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -1, &actualMoved);
+							if (SUCCEEDED(hr))
+							{
+								hr = pFallbackRange->GetBoundingRectangles(&rectArray);
+								success = SUCCEEDED(hr) && rectArray != NULL && rectArray->rgsabound[0].cElements > 0;
+							}
+							pFallbackRange->Release();
+						}
+					}
+					if (success)
 					{
 						double* pRect = NULL;
 						hr = SafeArrayAccessData(rectArray, (void**)&pRect);
