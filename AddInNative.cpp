@@ -42,8 +42,9 @@ static IAddInDefBase *pAsyncEvent = NULL;
 int CaretLeft = 0;
 int CaretTop = 0;
 
-// Глобальная переменная для UI Automation
-static IUIAutomation *pAutomation = NULL; 
+IUIAutomation *pAutomation = NULL; 
+IUIAutomationElement *g_pCachedElement = NULL;
+IUIAutomationTextPattern *g_pCachedTextPattern = NULL;
 
 uint32_t convToShortWchar(WCHAR_T** Dest, const wchar_t* Source, uint32_t len = 0);
 uint32_t convFromShortWchar(wchar_t** Dest, const WCHAR_T* Source, uint32_t len = 0);
@@ -113,15 +114,24 @@ long CAddInNative::GetInfo()
 //---------------------------------------------------------------------------//
 void CAddInNative::Done()
 {
-    // Освобождение IUIAutomation
-    if (pAutomation != NULL) {
-        pAutomation->Release();
-        pAutomation = NULL;
-    }
-    // Освобождение COM
-    CoUninitialize();
-}
-/////////////////////////////////////////////////////////////////////////////
+	// Очистка кэша
+	if (g_pCachedTextPattern != NULL) {
+		g_pCachedTextPattern->Release();
+		g_pCachedTextPattern = NULL;
+	}
+	if (g_pCachedElement != NULL) {
+		g_pCachedElement->Release();
+		g_pCachedElement = NULL;
+	}
+
+	// Освобождение IUIAutomation
+	if (pAutomation != NULL) {
+		pAutomation->Release();
+		pAutomation = NULL;
+	}
+	// Освобождение COM
+	CoUninitialize();
+}/////////////////////////////////////////////////////////////////////////////
 // ILanguageExtenderBase
 //---------------------------------------------------------------------------//
 bool CAddInNative::RegisterExtensionAs(WCHAR_T** wsExtensionName)
@@ -342,78 +352,113 @@ void StoreCaretPos(int xOffset, int yOffset)
 	CaretTop += yOffset;
 }
 
-// =========================================================================
-// НОВЫЙ МЕТОД: Использует UI Automation (для 8.5+)
-// НОВЫЙ МЕТОД: Использует UI Automation (для 8.5+)
-// НОВЫЙ МЕТОД: Использует UI Automation (для 8.5+)
 void StoreCaretPosUIA(int xOffset, int yOffset)
 {
+	CaretLeft = 0;
+	CaretTop = 0;
 	if (pAutomation == NULL) {
-		CaretLeft = 0;
-		CaretTop = 0;
 		return;
 	}
-	IUIAutomationElement *pFocusedElement = NULL;
-	IUIAutomationTextPattern *pTextPattern = NULL;
+
+	HRESULT hr;
+	RECT docRect = { 0 };
 	IUIAutomationTextRangeArray *pTextRangeArray = NULL;
 	IUIAutomationTextRange *pTextRange = NULL;
 	IUIAutomationTextRange *pExpandedRange = NULL;
-	HRESULT hr;
-	CaretLeft = 0;
-	CaretTop = 0;
-	RECT docRect = { 0 };
-	hr = pAutomation->GetFocusedElement(&pFocusedElement); // Обязательно
-	if (FAILED(hr) || pFocusedElement == NULL) {
-		return;
-	}
-	//CONTROLTYPEID controlType;
-	//pFocusedElement->get_CurrentControlType(&controlType);
-	//if (controlType == UIA_DocumentControlTypeId)
-	//{
-		pFocusedElement->get_CurrentBoundingRectangle(&docRect);
-		hr = pFocusedElement->GetCurrentPatternAs(UIA_TextPatternId, __uuidof(IUIAutomationTextPattern), (void**)&pTextPattern);
-		if (SUCCEEDED(hr) && pTextPattern != NULL)
+	bool isCacheValid = false;
+
+	// --- БЫСТРЫЙ ПУТЬ (Кэш) ---
+	if (g_pCachedElement != NULL && g_pCachedTextPattern != NULL)
+	{
+		// Обновляем координаты окна (окно могли переместить)
+		hr = g_pCachedElement->get_CurrentBoundingRectangle(&docRect);
+		if (SUCCEEDED(hr))
 		{
-			hr = pTextPattern->GetSelection(&pTextRangeArray);
-			if (SUCCEEDED(hr) && pTextRangeArray != NULL)
-			{
-				int rangeCount = 0;
-				pTextRangeArray->get_Length(&rangeCount);
-				if (rangeCount > 0)
-				{
-					hr = pTextRangeArray->GetElement(0, &pTextRange);
-					if (SUCCEEDED(hr) && pTextRange != NULL)
-					{
-						pTextRange->Clone(&pExpandedRange);
-						if (pExpandedRange != NULL)
-						{
-							// Расширяем диапазон до ближайшего символа
-							pExpandedRange->ExpandToEnclosingUnit(TextUnit_Character);
-							SAFEARRAY *rectArray = NULL;
-							hr = pExpandedRange->GetBoundingRectangles(&rectArray);
-							if (SUCCEEDED(hr) && rectArray != NULL && rectArray->rgsabound[0].cElements > 0)
-							{
-								double* pRect = NULL;
-								hr = SafeArrayAccessData(rectArray, (void**)&pRect);
-								if (SUCCEEDED(hr) && pRect != NULL)
-								{
-									CaretLeft = (int)pRect[0];
-									CaretTop = (int)pRect[3] + docRect.top; 
-									SafeArrayUnaccessData(rectArray);
-								}
-								SafeArrayDestroy(rectArray);
-							}
-							pExpandedRange->Release();
-						}
-					}
-					if (pTextRange != NULL) pTextRange->Release();
-				}
-				pTextRangeArray->Release();
+			hr = g_pCachedTextPattern->GetSelection(&pTextRangeArray);
+			if (SUCCEEDED(hr)) {
+				isCacheValid = true;
 			}
 		}
-	//}
-	if (pTextPattern != NULL) pTextPattern->Release();
-	if (pFocusedElement != NULL) pFocusedElement->Release();
+	}
+
+	// --- МЕДЛЕННЫЙ ПУТЬ (Сброс и поиск) ---
+	if (!isCacheValid)
+	{
+		if (g_pCachedTextPattern) { g_pCachedTextPattern->Release(); g_pCachedTextPattern = NULL; }
+		if (g_pCachedElement) { g_pCachedElement->Release(); g_pCachedElement = NULL; }
+		hr = pAutomation->GetFocusedElement(&g_pCachedElement);
+		if (FAILED(hr) || g_pCachedElement == NULL) return;
+		g_pCachedElement->get_CurrentBoundingRectangle(&docRect);
+		hr = g_pCachedElement->GetCurrentPatternAs(UIA_TextPatternId, __uuidof(IUIAutomationTextPattern), (void**)&g_pCachedTextPattern);
+		if (FAILED(hr) || g_pCachedTextPattern == NULL) {
+			g_pCachedElement->Release(); g_pCachedElement = NULL;
+			return;
+		}
+		hr = g_pCachedTextPattern->GetSelection(&pTextRangeArray);
+		if (FAILED(hr)) {
+			g_pCachedTextPattern->Release(); g_pCachedTextPattern = NULL;
+			g_pCachedElement->Release(); g_pCachedElement = NULL;
+			return;
+		}
+	}
+	if (pTextRangeArray != NULL)
+	{
+		int rangeCount = 0;
+		pTextRangeArray->get_Length(&rangeCount);
+		if (rangeCount > 0)
+		{
+			hr = pTextRangeArray->GetElement(0, &pTextRange);
+			if (SUCCEEDED(hr) && pTextRange != NULL)
+			{
+				pTextRange->Clone(&pExpandedRange);
+				if (pExpandedRange != NULL)
+				{
+					pExpandedRange->ExpandToEnclosingUnit(TextUnit_Character);
+					SAFEARRAY *rectArray = NULL;
+					hr = pExpandedRange->GetBoundingRectangles(&rectArray);
+					if (SUCCEEDED(hr) && rectArray != NULL && rectArray->rgsabound[0].cElements > 0)
+					{
+						double* pRect = NULL;
+						hr = SafeArrayAccessData(rectArray, (void**)&pRect);
+						if (SUCCEEDED(hr) && pRect != NULL)
+						{
+							double left = pRect[0];
+							double top = pRect[1];
+							double width = pRect[2];
+							double height = pRect[3];
+							CaretLeft = (int)left;
+							CaretTop = (int)top + height;
+							SafeArrayUnaccessData(rectArray);
+						}
+						SafeArrayDestroy(rectArray);
+					}
+					else
+					{
+						// Каретка справа от последнего символа текста. Правильнее это лечить путем вставки пробела правее каретки. А эта ветка сделана для подстраховки
+						pExpandedRange->ExpandToEnclosingUnit(TextUnit_Line);
+						SAFEARRAY *rectArrayY = NULL;
+						hr = pExpandedRange->GetBoundingRectangles(&rectArrayY);
+						if (SUCCEEDED(hr) && rectArrayY != NULL && rectArrayY->rgsabound[0].cElements > 0)
+						{
+							double* pRect = NULL;
+							if (SUCCEEDED(SafeArrayAccessData(rectArrayY, (void**)&pRect)) && pRect != NULL)
+							{
+								double top = pRect[1];
+								double height = pRect[3];
+								CaretTop = (int)top + height;
+								SafeArrayUnaccessData(rectArrayY);
+							}
+							SafeArrayDestroy(rectArrayY);
+						}
+					}
+					pExpandedRange->Release();
+				}
+				pTextRange->Release();
+			}
+		}
+		pTextRangeArray->Release();
+	}
+	// Внимание: НЕ освобождаем кэшированные g_pCachedElement и g_pCachedTextPattern
 	CaretLeft += xOffset;
 	CaretTop += yOffset;
 }
