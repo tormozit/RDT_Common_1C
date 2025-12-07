@@ -353,100 +353,67 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 		CaretTop = 0;
 		return;
 	}
-
 	IUIAutomationElement *pFocusedElement = NULL;
 	IUIAutomationTextPattern *pTextPattern = NULL;
 	IUIAutomationTextRangeArray *pTextRangeArray = NULL;
 	IUIAutomationTextRange *pTextRange = NULL;
 	IUIAutomationTextRange *pExpandedRange = NULL;
-
+	HRESULT hr;
 	CaretLeft = 0;
 	CaretTop = 0;
-
-	RECT docRect = { 0 }; // Bounding box самого Document-элемента для смещения
-
-						  // 1. Получаем элемент, находящийся в фокусе ввода
-	HRESULT hr = pAutomation->GetFocusedElement(&pFocusedElement);
+	RECT docRect = { 0 };
+	hr = pAutomation->GetFocusedElement(&pFocusedElement); // Обязательно
 	if (FAILED(hr) || pFocusedElement == NULL) {
 		return;
 	}
-
-	// 2. Проверяем, что это элемент Document (50030)
-	CONTROLTYPEID controlType;
-	pFocusedElement->get_CurrentControlType(&controlType);
-
-	if (controlType == UIA_DocumentControlTypeId)
-	{
-		// 2.1. Получаем экранные координаты Document-элемента
-		// Они будут использоваться как OFFSET, если GetBoundingRectangles вернет относительные координаты.
+	//CONTROLTYPEID controlType;
+	//pFocusedElement->get_CurrentControlType(&controlType);
+	//if (controlType == UIA_DocumentControlTypeId)
+	//{
 		pFocusedElement->get_CurrentBoundingRectangle(&docRect);
-
-		// 3. Получаем TextPattern
 		hr = pFocusedElement->GetCurrentPatternAs(UIA_TextPatternId, __uuidof(IUIAutomationTextPattern), (void**)&pTextPattern);
-
 		if (SUCCEEDED(hr) && pTextPattern != NULL)
 		{
-			// 4. Получаем выделение (каретку)
 			hr = pTextPattern->GetSelection(&pTextRangeArray);
-
 			if (SUCCEEDED(hr) && pTextRangeArray != NULL)
 			{
 				int rangeCount = 0;
 				pTextRangeArray->get_Length(&rangeCount);
-
 				if (rangeCount > 0)
 				{
-					// Берем первый (единственный) диапазон выделения/каретки
 					hr = pTextRangeArray->GetElement(0, &pTextRange);
-
 					if (SUCCEEDED(hr) && pTextRange != NULL)
 					{
-						// 5. РАБОТА С НУЛЕВЫМ ДИАПАЗОНОМ (КАРЕТКОЙ)
-
-						// Создаем копию диапазона
 						pTextRange->Clone(&pExpandedRange);
-
 						if (pExpandedRange != NULL)
 						{
-							// Расширяем диапазон до ближайшего символа для получения физических границ
+							// Расширяем диапазон до ближайшего символа
 							pExpandedRange->ExpandToEnclosingUnit(TextUnit_Character);
-
 							SAFEARRAY *rectArray = NULL;
 							hr = pExpandedRange->GetBoundingRectangles(&rectArray);
-
 							if (SUCCEEDED(hr) && rectArray != NULL && rectArray->rgsabound[0].cElements > 0)
 							{
-								// Берем первый прямоугольник
 								double* pRect = NULL;
 								hr = SafeArrayAccessData(rectArray, (void**)&pRect);
-
 								if (SUCCEEDED(hr) && pRect != NULL)
 								{
-									// pRect[0]=Left (относительно Document), pRect[3]=Bottom (относительно Document)
-
-									// *** КОРРЕКЦИЯ: Добавляем смещение Document-элемента ***
-									CaretLeft = (int)pRect[0]; // X-координата + смещение X документа
-									CaretTop = (int)pRect[3] + docRect.top;  // Y-координата (Bottom) + смещение Y документа
-
+									CaretLeft = (int)pRect[0];
+									CaretTop = (int)pRect[3] + docRect.top; 
 									SafeArrayUnaccessData(rectArray);
 								}
 								SafeArrayDestroy(rectArray);
 							}
-							pExpandedRange->Release(); // Освобождаем расширенный диапазон
+							pExpandedRange->Release();
 						}
 					}
-					if (pTextRange != NULL) pTextRange->Release(); // Освобождаем оригинальный диапазон
+					if (pTextRange != NULL) pTextRange->Release();
 				}
-				pTextRangeArray->Release(); // Освобождаем массив диапазонов
+				pTextRangeArray->Release();
 			}
 		}
-	}
-
-	// Освобождение ресурсов (остальные)
+	//}
 	if (pTextPattern != NULL) pTextPattern->Release();
 	if (pFocusedElement != NULL) pFocusedElement->Release();
-
-	// Применяем смещения, заданные пользователем
 	CaretLeft += xOffset;
 	CaretTop += yOffset;
 }
