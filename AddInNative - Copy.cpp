@@ -1,7 +1,7 @@
+
 #include "stdafx.h"
-#include "windows.h" // Добавлено явно
-#include <UIAutomation.h> // Добавлено для нового режима
-#include <string> 
+//#include "windows.h"
+//#include <string> 
 //#include <sstream>
 
 #ifdef __linux__
@@ -26,8 +26,8 @@
 #define eMethSleep 0 // (КоличествоМилисекунд)
 #define eMethPID 1
 #define eMethIsAdmin 2
-#define eMethGetCaretPos 3 // (xOffset, yOffset, UseUIAutomation)
-#define eMethMoveWindowToCaretPos 4 // (РазрешитьВыходЗаПределыЭкрана, СделатьПоверхВсех)
+#define eMethGetCaretPos 3
+#define eMethMoveWindowToCaretPos 4 // (РазрешитьВыходЗаПределыЭкрана)
 #define eMethRun 5
 
 #define BASE_ERRNO     7
@@ -37,13 +37,8 @@ static wchar_t *g_MethodNamesRu[] = {L"Спать", L"PID", L"ЛиАдмин", L"ПолучитьПоз
 
 static const wchar_t g_kClassNames[] = L"CAddInNative"; //"|OtherClass1|OtherClass2";
 static IAddInDefBase *pAsyncEvent = NULL;
-
-// Глобальные переменные для координат
 int CaretLeft = 0;
 int CaretTop = 0;
-
-// Глобальная переменная для UI Automation
-static IUIAutomation *pAutomation = NULL; 
 
 uint32_t convToShortWchar(WCHAR_T** Dest, const wchar_t* Source, uint32_t len = 0);
 uint32_t convFromShortWchar(wchar_t** Dest, const WCHAR_T* Source, uint32_t len = 0);
@@ -91,16 +86,6 @@ CAddInNative::~CAddInNative()
 bool CAddInNative::Init(void* pConnection)
 { 
     m_iConnect = (IAddInDefBase*)pConnection;
-    
-    // Инициализация COM (Multi-threaded Apartment)
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED); 
-    
-    // Инициализация IUIAutomation
-    if (pAutomation == NULL) {
-        CoCreateInstance(__uuidof(CUIAutomation), NULL, CLSCTX_INPROC_SERVER, 
-                         __uuidof(IUIAutomation), (void**)&pAutomation);
-    }
-    
     return m_iConnect != NULL;
 }
 //---------------------------------------------------------------------------//
@@ -113,13 +98,6 @@ long CAddInNative::GetInfo()
 //---------------------------------------------------------------------------//
 void CAddInNative::Done()
 {
-    // Освобождение IUIAutomation
-    if (pAutomation != NULL) {
-        pAutomation->Release();
-        pAutomation = NULL;
-    }
-    // Освобождение COM
-    CoUninitialize();
 }
 /////////////////////////////////////////////////////////////////////////////
 // ILanguageExtenderBase
@@ -240,7 +218,7 @@ long CAddInNative::GetNParams(const long lMethodNum)
 	case eMethIsAdmin:
 		return 0;
 	case eMethGetCaretPos:
-		return 3; // Увеличено до 3: xOffset, yOffset, UseUIAutomation
+		return 2;
 	case eMethMoveWindowToCaretPos:
 		return 2;
 	case eMethRun:
@@ -269,12 +247,7 @@ bool CAddInNative::GetParamDefValue(const long lMethodNum, const long lParamNum,
 		// There are no parameter values by default 
 		break;
 	case eMethGetCaretPos:
-        if (lParamNum == 2) // Значение по умолчанию для UseUIAutomation = Ложь
-        {
-            TV_VT(pvarParamDefValue) = VTYPE_BOOL;
-            pvarParamDefValue->bVal = false;
-            return true;
-        }
+		// There are no parameter values by default 
 		break;
 	case eMethMoveWindowToCaretPos:
 		// There are no parameter values by default 
@@ -310,15 +283,13 @@ bool CAddInNative::HasRetVal(const long lMethodNum)
     }
 }
 
-// =========================================================================
-// СТАРЫЙ МЕТОД: Использует GetGUIThreadInfo (для 8.2/8.3)
-// =========================================================================
 void StoreCaretPos(int xOffset, int yOffset)
 {
+	// http://stackoverflow.com/questions/31055249/is-it-possible-to-get-caret-position-in-word-to-update-faster
 	HWND hWindow = NULL;
 	DWORD remoteThreadId = 0;
 	hWindow = GetForegroundWindow();
-	//EnableWindow(hWindow, true); // Вроде не нужно
+	EnableWindow(hWindow, true);
 	remoteThreadId = GetWindowThreadProcessId(hWindow, 0);
 	POINT point;
 	point.x = 0;
@@ -338,109 +309,6 @@ void StoreCaretPos(int xOffset, int yOffset)
 			CaretTop = guiInfo.rcCaret.bottom + point.y;
 		}
 	}
-	CaretLeft += xOffset;
-	CaretTop += yOffset;
-}
-
-// =========================================================================
-// НОВЫЙ МЕТОД: Использует UI Automation (для 8.5+)
-// НОВЫЙ МЕТОД: Использует UI Automation (для 8.5+)
-void StoreCaretPosUIA(int xOffset, int yOffset)
-{
-	if (pAutomation == NULL) {
-		CaretLeft = 0;
-		CaretTop = 0;
-		return;
-	}
-
-	IUIAutomationElement *pFocusedElement = NULL;
-	IUIAutomationTextPattern *pTextPattern = NULL;
-	IUIAutomationTextRangeArray *pTextRangeArray = NULL;
-	IUIAutomationTextRange *pTextRange = NULL;
-
-	// Новая переменная для расширенного диапазона
-	IUIAutomationTextRange *pExpandedRange = NULL;
-
-	CaretLeft = 0;
-	CaretTop = 0;
-
-	// 1. Получаем элемент, находящийся в фокусе ввода
-	HRESULT hr = pAutomation->GetFocusedElement(&pFocusedElement);
-	if (FAILED(hr) || pFocusedElement == NULL) {
-		return;
-	}
-
-	// 2. Проверяем, что это элемент Document (50030)
-	CONTROLTYPEID controlType;
-	pFocusedElement->get_CurrentControlType(&controlType);
-
-	if (controlType == UIA_DocumentControlTypeId)
-	{
-		// 3. Получаем TextPattern
-		hr = pFocusedElement->GetCurrentPatternAs(UIA_TextPatternId, __uuidof(IUIAutomationTextPattern), (void**)&pTextPattern);
-
-		if (SUCCEEDED(hr) && pTextPattern != NULL)
-		{
-			// 4. Получаем выделение (каретку)
-			hr = pTextPattern->GetSelection(&pTextRangeArray);
-
-			if (SUCCEEDED(hr) && pTextRangeArray != NULL)
-			{
-				int rangeCount = 0;
-				pTextRangeArray->get_Length(&rangeCount);
-
-				if (rangeCount > 0)
-				{
-					// Берем первый (единственный) диапазон выделения/каретки
-					hr = pTextRangeArray->GetElement(0, &pTextRange);
-
-					if (SUCCEEDED(hr) && pTextRange != NULL)
-					{
-						// 5. РАБОТА С НУЛЕВЫМ ДИАПАЗОНОМ (КАРЕТКОЙ)
-
-						// Создаем копию диапазона, чтобы не менять оригинальный
-						pTextRange->Clone(&pExpandedRange);
-
-						if (pExpandedRange != NULL)
-						{
-							// Расширяем диапазон до ближайшего символа. 
-							// Это принудительно создает из нулевого диапазона диапазон с физическими границами.
-							// Используем TextUnit_Character, чтобы захватить координаты.
-							pExpandedRange->ExpandToEnclosingUnit(TextUnit_Character);
-
-							SAFEARRAY *rectArray = NULL;
-							hr = pExpandedRange->GetBoundingRectangles(&rectArray);
-
-							if (SUCCEEDED(hr) && rectArray != NULL && rectArray->rgsabound[0].cElements > 0)
-							{
-								// Берем первый прямоугольник
-								double* pRect = NULL;
-								hr = SafeArrayAccessData(rectArray, (void**)&pRect);
-
-								if (SUCCEEDED(hr) && pRect != NULL)
-								{
-									// Читаем координаты (left, top, right, bottom)
-									CaretLeft = (int)pRect[0]; // left
-									CaretTop = (int)pRect[1]; // top
-									SafeArrayUnaccessData(rectArray);
-								}
-								SafeArrayDestroy(rectArray);
-							}
-							pExpandedRange->Release(); // Освобождаем расширенный диапазон
-						}
-					}
-					if (pTextRange != NULL) pTextRange->Release(); // Освобождаем оригинальный диапазон
-				}
-				pTextRangeArray->Release(); // Освобождаем массив диапазонов
-			}
-		}
-	}
-
-	// Освобождение ресурсов (остальные)
-	if (pTextPattern != NULL) pTextPattern->Release();
-	if (pFocusedElement != NULL) pFocusedElement->Release();
-
-	// Применяем смещения
 	CaretLeft += xOffset;
 	CaretTop += yOffset;
 }
@@ -497,26 +365,14 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 			return false;
 	case eMethGetCaretPos:
 		int yOffset, xOffset;
-		bool UseUIAutomation;
-		
-		xOffset = 0;
 		yOffset = 0;
-		UseUIAutomation = false; // Значение по умолчанию
-
-		// Чтение параметров
-		if (lSizeArray > 0) xOffset = TV_INT(paParams);
-		if (lSizeArray > 1) yOffset = TV_INT(paParams + 1);
-		// Параметр UseUIAutomation доступен только если передано 3 параметра
-		if (lSizeArray > 2) UseUIAutomation = TV_BOOL(paParams + 2); 
-
-		if (UseUIAutomation)
+		xOffset = 0;
+		if (lSizeArray)
 		{
-			StoreCaretPosUIA(xOffset, yOffset); // Новый режим для 8.5+
-		}
-		else
-		{
-			StoreCaretPos(xOffset, yOffset); // Старый режим для 8.2/8.3
-		}
+			xOffset = TV_INT(paParams);
+			yOffset = TV_INT(paParams + 1);
+		}		
+		StoreCaretPos(xOffset, yOffset);
 		return true;
 	case eMethMoveWindowToCaretPos:
 		bool AllowOutScreen;
