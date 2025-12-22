@@ -1,8 +1,7 @@
 #include "stdafx.h"
-#include "windows.h" // Добавлено явно
-#include <UIAutomation.h> // Добавлено для нового режима
+#include "windows.h" 
+#include <UIAutomation.h> 
 #include <string> 
-//#include <sstream>
 
 #ifdef __linux__
 #include <unistd.h>
@@ -12,64 +11,118 @@
 #include <errno.h>
 #endif
 
-//#include <stdio.h>
-//#include <wchar.h>
 #include "AddInNative.h"
 #include "Shlobj.h"
 #include <string>
 
 // https://habrahabr.ru/post/191014/
 #define TIME_LEN 34
-#define ePropLast 0 // !!! Количество свойств !!!
-#define eMethLast 6 // !!! Количество методов !!!
+#define ePropLast 0 
+#define eMethLast 6 
 
-#define eMethSleep 0 // (КоличествоМилисекунд)
+#define eMethSleep 0 
 #define eMethPID 1
 #define eMethIsAdmin 2
-#define eMethGetCaretPos 3 // (xOffset, yOffset, UseUIAutomation)
-#define eMethMoveWindowToCaretPos 4 // (РазрешитьВыходЗаПределыЭкрана, СделатьПоверхВсех)
+#define eMethGetCaretPos 3 
+#define eMethMoveWindowToCaretPos 4 
 #define eMethRun 5
 
 #define BASE_ERRNO     7
 
-static wchar_t *g_MethodNames[] = {L"Sleep", L"PID", L"IsAdmin", L"GetCaretPos", L"MoveWindowToCaretPos", L"Run"};
-static wchar_t *g_MethodNamesRu[] = {L"Спать", L"PID", L"ЛиАдмин", L"ПолучитьПозициюКаретки", L"ПереместитьОкноВПозициюКаретки", L"Выполнить"};
+static wchar_t *g_MethodNames[] = { L"Sleep", L"PID", L"IsAdmin", L"GetCaretPos", L"MoveWindowToCaretPos", L"Run" };
+static wchar_t *g_MethodNamesRu[] = { L"Спать", L"PID", L"ЛиАдмин", L"ПолучитьПозициюКаретки", L"ПереместитьОкноВПозициюКаретки", L"Выполнить" };
 
-static const wchar_t g_kClassNames[] = L"CAddInNative"; //"|OtherClass1|OtherClass2";
+static const wchar_t g_kClassNames[] = L"CAddInNative";
 static IAddInDefBase *pAsyncEvent = NULL;
 
 // Глобальные переменные для координат
 int CaretLeft = 0;
 int CaretTop = 0;
 
-IUIAutomation *pAutomation = NULL; 
+IUIAutomation *pAutomation = NULL;
 IUIAutomationElement *g_pCachedElement = NULL;
 IUIAutomationTextPattern *g_pCachedTextPattern = NULL;
 
-uint32_t convToShortWchar(WCHAR_T** Dest, const wchar_t* Source, uint32_t len = 0);
-uint32_t convFromShortWchar(wchar_t** Dest, const WCHAR_T* Source, uint32_t len = 0);
-uint32_t getLenShortWcharStr(const WCHAR_T* Source);
+// --------------------------------------------------------------------------
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (Перенесены наверх, чтобы избежать конфликтов объявлений)
+// --------------------------------------------------------------------------
+uint32_t getLenShortWcharStr(const WCHAR_T* Source)
+{
+	uint32_t res = 0;
+	WCHAR_T *tmpShort = (WCHAR_T*)Source;
+
+	while (*tmpShort++)
+		++res;
+
+	return res;
+}
+
+uint32_t convToShortWchar(WCHAR_T** Dest, const wchar_t* Source, uint32_t len = 0)
+{
+	if (!len)
+		len = ::wcslen(Source) + 1;
+
+	if (!*Dest)
+		*Dest = new WCHAR_T[len];
+
+	WCHAR_T* tmpShort = *Dest;
+	wchar_t* tmpWChar = (wchar_t*)Source;
+	uint32_t res = 0;
+
+	::memset(*Dest, 0, len * sizeof(WCHAR_T));
+	do
+	{
+		*tmpShort++ = (WCHAR_T)*tmpWChar++;
+		++res;
+	} while (len-- && *tmpWChar);
+
+	return res;
+}
+
+uint32_t convFromShortWchar(wchar_t** Dest, const WCHAR_T* Source, uint32_t len = 0)
+{
+	if (!len)
+		len = getLenShortWcharStr(Source) + 1;
+
+	if (!*Dest)
+		*Dest = new wchar_t[len];
+
+	wchar_t* tmpWChar = *Dest;
+	WCHAR_T* tmpShort = (WCHAR_T*)Source;
+	uint32_t res = 0;
+
+	::memset(*Dest, 0, len * sizeof(wchar_t));
+	do
+	{
+		*tmpWChar++ = (wchar_t)*tmpShort++;
+		++res;
+	} while (len-- && *tmpShort);
+
+	return res;
+}
+// --------------------------------------------------------------------------
+
 static WcharWrapper s_names(g_kClassNames);
 
 //---------------------------------------------------------------------------//
 long GetClassObject(const WCHAR_T* wsName, IComponentBase** pInterface)
 {
-    if(!*pInterface)
-    {
-        *pInterface= new CAddInNative;
-        return (long)*pInterface;
-    }
-    return 0;
+	if (!*pInterface)
+	{
+		*pInterface = new CAddInNative;
+		return (long)*pInterface;
+	}
+	return 0;
 }
 //---------------------------------------------------------------------------//
 long DestroyObject(IComponentBase** pIntf)
 {
-   if(!*pIntf)
-      return -1;
+	if (!*pIntf)
+		return -1;
 
-   delete *pIntf;
-   *pIntf = 0;
-   return 0;
+	delete *pIntf;
+	*pIntf = 0;
+	return 0;
 }
 //---------------------------------------------------------------------------//
 const WCHAR_T* GetClassNames()
@@ -81,8 +134,8 @@ const WCHAR_T* GetClassNames()
 //---------------------------------------------------------------------------//
 CAddInNative::CAddInNative()
 {
-    m_iMemory = 0;
-    m_iConnect = 0;
+	m_iMemory = 0;
+	m_iConnect = 0;
 }
 //---------------------------------------------------------------------------//
 CAddInNative::~CAddInNative()
@@ -90,26 +143,26 @@ CAddInNative::~CAddInNative()
 }
 //---------------------------------------------------------------------------//
 bool CAddInNative::Init(void* pConnection)
-{ 
-    m_iConnect = (IAddInDefBase*)pConnection;
-    
-    // Инициализация COM (Multi-threaded Apartment)
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED); 
-    
-    // Инициализация IUIAutomation
-    if (pAutomation == NULL) {
-        CoCreateInstance(__uuidof(CUIAutomation), NULL, CLSCTX_INPROC_SERVER, 
-                         __uuidof(IUIAutomation), (void**)&pAutomation);
-    }
-    
-    return m_iConnect != NULL;
+{
+	m_iConnect = (IAddInDefBase*)pConnection;
+
+	// Инициализация COM (Multi-threaded Apartment)
+	CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+
+	// Инициализация IUIAutomation
+	if (pAutomation == NULL) {
+		CoCreateInstance(__uuidof(CUIAutomation), NULL, CLSCTX_INPROC_SERVER,
+			__uuidof(IUIAutomation), (void**)&pAutomation);
+	}
+
+	return m_iConnect != NULL;
 }
 //---------------------------------------------------------------------------//
 long CAddInNative::GetInfo()
-{ 
-    // Component should put supported component technology version 
-    // This component supports 2.0 version
-    return 2000; 
+{
+	// Component should put supported component technology version 
+	// This component supports 2.0 version
+	return 2000;
 }
 //---------------------------------------------------------------------------//
 void CAddInNative::Done()
@@ -132,179 +185,181 @@ void CAddInNative::Done()
 	// Освобождение COM
 	CoUninitialize();
 }/////////////////////////////////////////////////////////////////////////////
-// ILanguageExtenderBase
-//---------------------------------------------------------------------------//
+ // ILanguageExtenderBase
+ //---------------------------------------------------------------------------//
 bool CAddInNative::RegisterExtensionAs(WCHAR_T** wsExtensionName)
-{ 
-    wchar_t *wsExtension = L"AddIn";
-    int iActualSize = ::wcslen(wsExtension) + 1;
-    WCHAR_T* dest = 0;
+{
+	wchar_t *wsExtension = L"AddIn";
+	int iActualSize = ::wcslen(wsExtension) + 1;
+	WCHAR_T* dest = 0;
 
-    if (m_iMemory)
-    {
-        if(m_iMemory->AllocMemory((void**)wsExtensionName, iActualSize * sizeof(WCHAR_T)))
-            ::convToShortWchar(wsExtensionName, wsExtension, iActualSize);
-        return true;
-    }
+	if (m_iMemory)
+	{
+		if (m_iMemory->AllocMemory((void**)wsExtensionName, iActualSize * sizeof(WCHAR_T)))
+			::convToShortWchar(wsExtensionName, wsExtension, iActualSize);
+		return true;
+	}
 
-    return false; 
+	return false;
 }
 //---------------------------------------------------------------------------//
 long CAddInNative::GetNProps()
-{ 
-    // You may delete next lines and add your own implementation code here
-    return ePropLast;
+{
+	// You may delete next lines and add your own implementation code here
+	return ePropLast;
 }
 //---------------------------------------------------------------------------//
 long CAddInNative::FindProp(const WCHAR_T* wsPropName)
-{ 
-    long plPropNum = -1;
-    return plPropNum;
+{
+	long plPropNum = -1;
+	return plPropNum;
 }
 //---------------------------------------------------------------------------//
 const WCHAR_T* CAddInNative::GetPropName(long lPropNum, long lPropAlias)
-{ 
-    return NULL;
+{
+	return NULL;
 }
 //---------------------------------------------------------------------------//
 bool CAddInNative::GetPropVal(const long lPropNum, tVariant* pvarPropVal)
-{ 
-    return true;
+{
+	return true;
 }
 //---------------------------------------------------------------------------//
 bool CAddInNative::SetPropVal(const long lPropNum, tVariant *varPropVal)
-{ 
-    return true;
+{
+	return true;
 }
 //---------------------------------------------------------------------------//
 bool CAddInNative::IsPropReadable(const long lPropNum)
-{ 
-    return false;
+{
+	return false;
 }
 //---------------------------------------------------------------------------//
 bool CAddInNative::IsPropWritable(const long lPropNum)
 {
-    return false;
+	return false;
 }
 //---------------------------------------------------------------------------//
 long CAddInNative::GetNMethods()
-{ 
-    return eMethLast;
+{
+	return eMethLast;
 }
 //---------------------------------------------------------------------------//
 long CAddInNative::FindMethod(const WCHAR_T* wsMethodName)
-{ 
-    long plMethodNum = -1;
-    wchar_t* name = 0;
+{
+	long plMethodNum = -1;
+	wchar_t* name = 0;
 
-    ::convFromShortWchar(&name, wsMethodName);
+	::convFromShortWchar(&name, wsMethodName);
 
-    plMethodNum = findName(g_MethodNames, name, eMethLast);
+	plMethodNum = findName(g_MethodNames, name, eMethLast);
 
-    if (plMethodNum == -1)
-        plMethodNum = findName(g_MethodNamesRu, name, eMethLast);
+	if (plMethodNum == -1)
+		plMethodNum = findName(g_MethodNamesRu, name, eMethLast);
 
-    return plMethodNum;
+	return plMethodNum;
 }
 //---------------------------------------------------------------------------//
 const WCHAR_T* CAddInNative::GetMethodName(const long lMethodNum, const long lMethodAlias)
-{ 
-    if (lMethodNum >= eMethLast)
-        return NULL;
+{
+	if (lMethodNum >= eMethLast)
+		return NULL;
 
-    wchar_t *wsCurrentName = NULL;
-    WCHAR_T *wsMethodName = NULL;
-    int iActualSize = 0;
+	wchar_t *wsCurrentName = NULL;
+	WCHAR_T *wsMethodName = NULL;
+	int iActualSize = 0;
 
-    switch(lMethodAlias)
-    {
-    case 0: // First language
-        wsCurrentName = g_MethodNames[lMethodNum];
-        break;
-    case 1: // Second language
-        wsCurrentName = g_MethodNamesRu[lMethodNum];
-        break;
-    default: 
-        return 0;
-    }
+	switch (lMethodAlias)
+	{
+	case 0: // First language
+		wsCurrentName = g_MethodNames[lMethodNum];
+		break;
+	case 1: // Second language
+		wsCurrentName = g_MethodNamesRu[lMethodNum];
+		break;
+	default:
+		return 0;
+	}
 
-    iActualSize = wcslen(wsCurrentName)+1;
+	iActualSize = wcslen(wsCurrentName) + 1;
 
-    if (m_iMemory && wsCurrentName)
-    {
-        if(m_iMemory->AllocMemory((void**)&wsMethodName, iActualSize * sizeof(WCHAR_T)))
-            ::convToShortWchar(&wsMethodName, wsCurrentName, iActualSize);
-    }
+	if (m_iMemory && wsCurrentName)
+	{
+		if (m_iMemory->AllocMemory((void**)&wsMethodName, iActualSize * sizeof(WCHAR_T)))
+			::convToShortWchar(&wsMethodName, wsCurrentName, iActualSize);
+	}
 
-    return wsMethodName;
+	return wsMethodName;
 }
 //---------------------------------------------------------------------------//
 long CAddInNative::GetNParams(const long lMethodNum)
-{ 
-    switch(lMethodNum)
-    { 
-    case eMethSleep:
-        return 1;
+{
+	switch (lMethodNum)
+	{
+	case eMethSleep:
+		return 1;
 	case eMethPID:
 		return 0;
 	case eMethIsAdmin:
 		return 0;
 	case eMethGetCaretPos:
-		return 3; // Увеличено до 3: xOffset, yOffset, UseUIAutomation
+		return 3;
 	case eMethMoveWindowToCaretPos:
-		return 2;
+		return 3; // Увеличено до 3
 	case eMethRun:
 		return 5;
 	default:
-        return 0;
-    }
-    
-    return 0;
+		return 0;
+	}
+
+	return 0;
 }
 //---------------------------------------------------------------------------//
 bool CAddInNative::GetParamDefValue(const long lMethodNum, const long lParamNum,
-                          tVariant *pvarParamDefValue)
-{ 
-    TV_VT(pvarParamDefValue)= VTYPE_EMPTY;
+	tVariant *pvarParamDefValue)
+{
+	TV_VT(pvarParamDefValue) = VTYPE_EMPTY;
 
-    switch(lMethodNum)
-    { 
-    case eMethSleep:
-        // There are no parameter values by default 
-        break;
-	case eMethPID:
-		// There are no parameter values by default 
+	switch (lMethodNum)
+	{
+	case eMethSleep:
 		break;
- 	case eMethIsAdmin:
-		// There are no parameter values by default 
+	case eMethPID:
+		break;
+	case eMethIsAdmin:
 		break;
 	case eMethGetCaretPos:
-        if (lParamNum == 2) // Значение по умолчанию для UseUIAutomation = Ложь
-        {
-            TV_VT(pvarParamDefValue) = VTYPE_BOOL;
-            pvarParamDefValue->bVal = false;
-            return true;
-        }
+		if (lParamNum == 2)
+		{
+			TV_VT(pvarParamDefValue) = VTYPE_BOOL;
+			pvarParamDefValue->bVal = false;
+			return true;
+		}
 		break;
 	case eMethMoveWindowToCaretPos:
-		// There are no parameter values by default 
-		break;	
+		if (lParamNum == 2) // Значение по умолчанию для Title
+		{
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			pvarParamDefValue->pwstrVal = NULL;
+			pvarParamDefValue->wstrLen = 0;
+			return true;
+		}
+		break;
 	case eMethRun:
-		// There are no parameter values by default 
 		break;
 	default:
-        return false;
-    }
+		return false;
+	}
 
-    return false;
-} 
+	return false;
+}
 //---------------------------------------------------------------------------//
 bool CAddInNative::HasRetVal(const long lMethodNum)
-{ 
-    switch(lMethodNum)
-    { 
-    case eMethSleep:
-        return false;
+{
+	switch (lMethodNum)
+	{
+	case eMethSleep:
+		return false;
 	case eMethPID:
 		return true;
 	case eMethIsAdmin:
@@ -316,19 +371,16 @@ bool CAddInNative::HasRetVal(const long lMethodNum)
 	case eMethRun:
 		return false;
 	default:
-        return false;
-    }
+		return false;
+	}
 }
 
-// =========================================================================
-// СТАРЫЙ МЕТОД: Использует GetGUIThreadInfo (для 8.2/8.3)
 // =========================================================================
 void StoreCaretPos(int xOffset, int yOffset)
 {
 	HWND hWindow = NULL;
 	DWORD remoteThreadId = 0;
-	hWindow = GetForegroundWindow();
-	//EnableWindow(hWindow, true); // Вроде не нужно
+	hWindow = GetFocus();
 	remoteThreadId = GetWindowThreadProcessId(hWindow, 0);
 	POINT point;
 	point.x = 0;
@@ -367,10 +419,8 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 	IUIAutomationTextRange *pExpandedRange = NULL;
 	bool isCacheValid = false;
 
-	// --- БЫСТРЫЙ ПУТЬ (Кэш) ---
 	if (g_pCachedElement != NULL && g_pCachedTextPattern != NULL)
 	{
-		// Обновляем координаты окна (окно могли переместить)
 		hr = g_pCachedElement->get_CurrentBoundingRectangle(&docRect);
 		if (SUCCEEDED(hr))
 		{
@@ -381,7 +431,6 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 		}
 	}
 
-	// --- МЕДЛЕННЫЙ ПУТЬ (Сброс и поиск) ---
 	if (!isCacheValid)
 	{
 		if (g_pCachedTextPattern) { g_pCachedTextPattern->Release(); g_pCachedTextPattern = NULL; }
@@ -420,11 +469,9 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 					if (!success)
 					{
 						IUIAutomationTextRange *pFallbackRange = NULL;
-						// --- 2. FALLBACK: справа от последнего символа текста (cElements = 0) ---
 						pTextRange->Clone(&pFallbackRange);
 						if (pFallbackRange != NULL)
 						{
-							// Перемещаем начало диапазона на 1 символ назад (захватываем последний символ)
 							int actualMoved = 0;
 							hr = pFallbackRange->MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -1, &actualMoved);
 							if (SUCCEEDED(hr))
@@ -453,7 +500,6 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 					}
 					else
 					{
-						// Каретка справа от последнего символа текста. Правильнее это лечить путем вставки пробела правее каретки. А эта ветка сделана для подстраховки
 						pExpandedRange->ExpandToEnclosingUnit(TextUnit_Line);
 						SAFEARRAY *rectArrayY = NULL;
 						hr = pExpandedRange->GetBoundingRectangles(&rectArrayY);
@@ -477,14 +523,44 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 		}
 		pTextRangeArray->Release();
 	}
-	// Внимание: НЕ освобождаем кэшированные g_pCachedElement и g_pCachedTextPattern
 	CaretLeft += xOffset;
 	CaretTop += yOffset;
 }
 
-void MoveWindowToCaret(bool AllowOutScreen, bool MakeAlwaysOnTop)
+void MoveWindowToCaret(bool AllowOutScreen, bool MakeAlwaysOnTop, const wchar_t* Title)
 {
-	HWND hWindow = GetForegroundWindow();
+	HWND hWindow = NULL;
+	DWORD currentProcessId = GetCurrentProcessId();
+
+	// Если Title задан и не пуст, ищем окно по заголовку только в текущем процессе
+	if (Title != NULL && wcslen(Title) > 0) {
+		// Перебираем все окна для поиска нужного заголовка в текущем процессе
+		HWND hWnd = GetTopWindow(NULL);
+		while (hWnd != NULL) {
+			DWORD windowProcessId;
+			GetWindowThreadProcessId(hWnd, &windowProcessId);
+
+			// Проверяем, принадлежит ли окно текущему процессу
+			if (windowProcessId == currentProcessId) {
+				wchar_t windowTitle[256];
+				GetWindowTextW(hWnd, windowTitle, 256);
+
+				// Проверяем, начинается ли заголовок окна с искомой строки
+				if (wcsncmp(windowTitle, Title, wcslen(Title)) == 0) {
+					hWindow = hWnd;
+					break;
+				}
+			}
+			hWnd = GetNextWindow(hWnd, GW_HWNDNEXT);
+		}
+	}
+	else {
+		// Иначе берем окно, владеющее фокусом (оно всегда в текущем процессе)
+		hWindow = GetFocus();
+	}
+
+	if (hWindow == NULL) return;
+
 	RECT rect;
 	GetWindowRect(hWindow, &rect);
 	if (CaretTop > 0)
@@ -511,22 +587,22 @@ void MoveWindowToCaret(bool AllowOutScreen, bool MakeAlwaysOnTop)
 
 //---------------------------------------------------------------------------//
 bool CAddInNative::CallAsProc(const long lMethodNum,
-                    tVariant* paParams, const long lSizeArray)
-{ 
+	tVariant* paParams, const long lSizeArray)
+{
 	HWND hWindow = NULL;
 	wchar_t* wsTmp = 0;
 	int Result = 0;
 	switch (lMethodNum)
-    { 
-    case eMethSleep:
-        if (lSizeArray)
-        {
+	{
+	case eMethSleep:
+		if (lSizeArray)
+		{
 			int Duration = TV_INT(paParams);
 			if (Duration > 0)
-				{
-					Sleep(Duration);
-					return true;
-				}
+			{
+				Sleep(Duration);
+				return true;
+			}
 			else
 				return false;
 		}
@@ -535,38 +611,42 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 	case eMethGetCaretPos:
 		int yOffset, xOffset;
 		bool UseUIAutomation;
-		
+
 		xOffset = 0;
 		yOffset = 0;
-		UseUIAutomation = false; // Значение по умолчанию
+		UseUIAutomation = false;
 
-		// Чтение параметров
 		if (lSizeArray > 0) xOffset = TV_INT(paParams);
 		if (lSizeArray > 1) yOffset = TV_INT(paParams + 1);
-		// Параметр UseUIAutomation доступен только если передано 3 параметра
-		if (lSizeArray > 2) UseUIAutomation = TV_BOOL(paParams + 2); 
+		if (lSizeArray > 2) UseUIAutomation = TV_BOOL(paParams + 2);
 
 		if (UseUIAutomation)
 		{
-			StoreCaretPosUIA(xOffset, yOffset); // Новый режим для 8.5+
+			StoreCaretPosUIA(xOffset, yOffset);
 		}
 		else
 		{
-			StoreCaretPos(xOffset, yOffset); // Старый режим для 8.2/8.3
+			StoreCaretPos(xOffset, yOffset);
 		}
 		return true;
 	case eMethMoveWindowToCaretPos:
-		bool AllowOutScreen;
+	{	bool AllowOutScreen;
 		AllowOutScreen = false;
 		bool MakeAlwaysOnTop;
 		MakeAlwaysOnTop = false;
-		if (lSizeArray)
-		{
-			AllowOutScreen = TV_BOOL(paParams);
-			MakeAlwaysOnTop = TV_BOOL(paParams + 1);
+		wchar_t* Title = NULL;
+
+		if (lSizeArray > 0) AllowOutScreen = TV_BOOL(paParams);
+		if (lSizeArray > 1) MakeAlwaysOnTop = TV_BOOL(paParams + 1);
+
+		if (lSizeArray > 2) {
+			if (paParams[2].vt == VTYPE_PWSTR) {
+				Title = paParams[2].pwstrVal;
+			}
 		}
-		MoveWindowToCaret(AllowOutScreen, MakeAlwaysOnTop);
+		MoveWindowToCaret(AllowOutScreen, MakeAlwaysOnTop, Title);
 		return true;
+	}
 	case eMethRun:
 		if (lSizeArray)
 		{
@@ -579,12 +659,12 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 			{
 				wchar_t* param2 = 0;
 				if (AdminMode)
-					convToShortWchar(&param2, L"runas");
+					convToShortWchar(&param2, L"runas"); // Теперь это работает корректно, т.к. функция уже определена выше
 				SHELLEXECUTEINFO shExInfo = { 0 };
 				shExInfo.cbSize = sizeof(shExInfo);
 				shExInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
 				shExInfo.hwnd = 0;
-				shExInfo.lpVerb = param2; 
+				shExInfo.lpVerb = param2;
 				shExInfo.lpFile = ExeFilename;
 				shExInfo.lpParameters = ExeParams;
 				shExInfo.lpDirectory = CurrentDirectory;
@@ -605,25 +685,25 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 		}
 		else
 			return false;
-    default:
-        return false;
-    }
+	default:
+		return false;
+	}
 
 }
 
 
 //---------------------------------------------------------------------------//
 bool CAddInNative::CallAsFunc(const long lMethodNum,
-                tVariant* pvarRetValue, tVariant* paParams, const long lSizeArray)
-{ 
-    bool ret = false;
-    FILE *file = 0;
-    char *name = 0;
-    int size = 0;
-    char *mbstr = 0;
-    wchar_t* wsTmp = 0;
-	switch(lMethodNum)
-	{ 
+	tVariant* pvarRetValue, tVariant* paParams, const long lSizeArray)
+{
+	bool ret = false;
+	FILE *file = 0;
+	char *name = 0;
+	int size = 0;
+	char *mbstr = 0;
+	wchar_t* wsTmp = 0;
+	switch (lMethodNum)
+	{
 	case eMethPID:
 		pvarRetValue->intVal = GetCurrentProcessId();
 		pvarRetValue->vt = VTYPE_I4;
@@ -635,35 +715,15 @@ bool CAddInNative::CallAsFunc(const long lMethodNum,
 	default:
 		return false;
 	}
-    return ret; 
+	return ret;
 }
-
-//template <typename T>
-//std::string toString(T val)
-//{
-//	std::ostringstream oss;
-//	oss << val;
-//	return oss.str();
-//}
-//
-//template<typename T>
-//T fromString(const std::string& s)
-//{
-//	std::istringstream iss(s);
-//	T res;
-//	iss >> res;
-//	return res;
-//}
 
 //---------------------------------------------------------------------------//
 void CAddInNative::SetLocale(const WCHAR_T* loc)
 {
 #ifndef __linux__
-    _wsetlocale(LC_ALL, loc);
+	_wsetlocale(LC_ALL, loc);
 #else
-    //We convert in char* char_locale
-    //also we establish locale
-    //setlocale(LC_ALL, char_locale);
 #endif
 }
 /////////////////////////////////////////////////////////////////////////////
@@ -671,99 +731,44 @@ void CAddInNative::SetLocale(const WCHAR_T* loc)
 //---------------------------------------------------------------------------//
 bool CAddInNative::setMemManager(void* mem)
 {
-    m_iMemory = (IMemoryManager*)mem;
-    return m_iMemory != 0;
+	m_iMemory = (IMemoryManager*)mem;
+	return m_iMemory != 0;
 }
 //---------------------------------------------------------------------------//
-void CAddInNative::addError(uint32_t wcode, const wchar_t* source, 
-                        const wchar_t* descriptor, long code)
+void CAddInNative::addError(uint32_t wcode, const wchar_t* source,
+	const wchar_t* descriptor, long code)
 {
-    if (m_iConnect)
-    {
-        WCHAR_T *err = 0;
-        WCHAR_T *descr = 0;
-        
-        ::convToShortWchar(&err, source);
-        ::convToShortWchar(&descr, descriptor);
+	if (m_iConnect)
+	{
+		WCHAR_T *err = 0;
+		WCHAR_T *descr = 0;
 
-        m_iConnect->AddError(wcode, err, descr, code);
-        delete[] err;
-        delete[] descr;
-    }
+		::convToShortWchar(&err, source);
+		::convToShortWchar(&descr, descriptor);
+
+		m_iConnect->AddError(wcode, err, descr, code);
+		delete[] err;
+		delete[] descr;
+	}
 }
 //---------------------------------------------------------------------------//
-long CAddInNative::findName(wchar_t* names[], const wchar_t* name, 
-                         const uint32_t size) const
+long CAddInNative::findName(wchar_t* names[], const wchar_t* name,
+	const uint32_t size) const
 {
-    long ret = -1;
-    for (uint32_t i = 0; i < size; i++)
-    {
-        if (!wcscmp(names[i], name))
-        {
-            ret = i;
-            break;
-        }
-    }
-    return ret;
+	long ret = -1;
+	for (uint32_t i = 0; i < size; i++)
+	{
+		if (!wcscmp(names[i], name))
+		{
+			ret = i;
+			break;
+		}
+	}
+	return ret;
 }
 //---------------------------------------------------------------------------//
-uint32_t convToShortWchar(WCHAR_T** Dest, const wchar_t* Source, uint32_t len)
-{
-    if (!len)
-        len = ::wcslen(Source)+1;
-
-    if (!*Dest)
-        *Dest = new WCHAR_T[len];
-
-    WCHAR_T* tmpShort = *Dest;
-    wchar_t* tmpWChar = (wchar_t*) Source;
-    uint32_t res = 0;
-
-    ::memset(*Dest, 0, len*sizeof(WCHAR_T));
-    do
-    {
-        *tmpShort++ = (WCHAR_T)*tmpWChar++;
-        ++res;
-    }
-    while (len-- && *tmpWChar);
-
-    return res;
-}
-//---------------------------------------------------------------------------//
-uint32_t convFromShortWchar(wchar_t** Dest, const WCHAR_T* Source, uint32_t len)
-{
-    if (!len)
-        len = getLenShortWcharStr(Source)+1;
-
-    if (!*Dest)
-        *Dest = new wchar_t[len];
-
-    wchar_t* tmpWChar = *Dest;
-    WCHAR_T* tmpShort = (WCHAR_T*)Source;
-    uint32_t res = 0;
-
-    ::memset(*Dest, 0, len*sizeof(wchar_t));
-    do
-    {
-        *tmpWChar++ = (wchar_t)*tmpShort++;
-        ++res;
-    }
-    while (len-- && *tmpShort);
-
-    return res;
-}
-//---------------------------------------------------------------------------//
-uint32_t getLenShortWcharStr(const WCHAR_T* Source)
-{
-    uint32_t res = 0;
-    WCHAR_T *tmpShort = (WCHAR_T*)Source;
-
-    while (*tmpShort++)
-        ++res;
-
-    return res;
-}
-//---------------------------------------------------------------------------//
+// РЕАЛИЗАЦИИ ФУНКЦИЙ convToShortWchar И ПР. УДАЛЕНЫ ОТСЮДА
+// (они перенесены в начало файла)
 //---------------------------------------------------------------------------//
 
 #ifdef LINUX_OR_MACOS
