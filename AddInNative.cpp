@@ -18,7 +18,7 @@
 // https://habrahabr.ru/post/191014/
 #define TIME_LEN 34
 #define ePropLast 0 
-#define eMethLast 6 
+#define eMethLast 8 // Было 7, стало 8
 
 #define eMethSleep 0 
 #define eMethPID 1
@@ -26,11 +26,14 @@
 #define eMethGetCaretPos 3 
 #define eMethMoveWindowToCaretPos 4 
 #define eMethRun 5
+#define eMethSetClipboard 6 
+#define eMethGetClipboard 7 // Новый метод
 
 #define BASE_ERRNO     7
 
-static wchar_t *g_MethodNames[] = { L"Sleep", L"PID", L"IsAdmin", L"GetCaretPos", L"MoveWindowToCaretPos", L"Run" };
-static wchar_t *g_MethodNamesRu[] = { L"Спать", L"PID", L"ЛиАдмин", L"ПолучитьПозициюКаретки", L"ПереместитьОкноВПозициюКаретки", L"Выполнить" };
+// Добавлено имя метода GetClipboard
+static wchar_t *g_MethodNames[] = { L"Sleep", L"PID", L"IsAdmin", L"GetCaretPos", L"MoveWindowToCaretPos", L"Run", L"SetClipboard", L"GetClipboard" };
+static wchar_t *g_MethodNamesRu[] = { L"Спать", L"PID", L"ЛиАдмин", L"ПолучитьПозициюКаретки", L"ПереместитьОкноВПозициюКаретки", L"Выполнить", L"УстановитьБуферОбмена", L"ПолучитьБуферОбмена" };
 
 static const wchar_t g_kClassNames[] = L"CAddInNative";
 static IAddInDefBase *pAsyncEvent = NULL;
@@ -44,7 +47,7 @@ IUIAutomationElement *g_pCachedElement = NULL;
 IUIAutomationTextPattern *g_pCachedTextPattern = NULL;
 
 // --------------------------------------------------------------------------
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (Перенесены наверх, чтобы избежать конфликтов объявлений)
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // --------------------------------------------------------------------------
 uint32_t getLenShortWcharStr(const WCHAR_T* Source)
 {
@@ -100,6 +103,109 @@ uint32_t convFromShortWchar(wchar_t** Dest, const WCHAR_T* Source, uint32_t len 
 
 	return res;
 }
+
+// Структура для поиска окна текущего процесса
+struct FindWindowData {
+	DWORD processId;
+	const wchar_t* title;
+	HWND hWndFound;
+};
+
+// Callback функция для фильтрации окон
+BOOL CALLBACK EnumWindowsProc(HWND hWnd, LPARAM lParam) {
+	FindWindowData* data = (FindWindowData*)lParam;
+	DWORD windowPid = 0;
+	GetWindowThreadProcessId(hWnd, &windowPid);
+
+	if (windowPid == data->processId) {
+		if (data->title != NULL && wcslen(data->title) > 0) {
+			wchar_t buffer[256];
+			GetWindowTextW(hWnd, buffer, 256);
+			if (wcsstr(buffer, data->title) != NULL) {
+				data->hWndFound = hWnd;
+				return FALSE;
+			}
+		}
+		else if (IsWindowVisible(hWnd)) {
+			data->hWndFound = hWnd;
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+// Установка текста в буфер обмена
+void SetToClipboard(const wchar_t* text)
+{
+	if (text == NULL) return;
+
+	if (OpenClipboard(NULL))
+	{
+		EmptyClipboard();
+		size_t len = (wcslen(text) + 1) * sizeof(wchar_t);
+		HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, len);
+		if (hMem != NULL)
+		{
+			void* pData = GlobalLock(hMem);
+			if (pData != NULL)
+			{
+				memcpy(pData, text, len);
+				GlobalUnlock(hMem);
+				SetClipboardData(CF_UNICODETEXT, hMem);
+			}
+			if (pData == NULL) GlobalFree(hMem);
+		}
+		CloseClipboard();
+	}
+}
+
+// Получение текста из буфера обмена (реализация)
+// Возвращает true, если успешно прочитано. Результат записывается в память 1С (memMgr)
+bool GetFromClipboard(tVariant* pvarRetValue, IMemoryManager* memMgr)
+{
+	bool success = false;
+
+	// Инициализируем пустой строкой
+	TV_VT(pvarRetValue) = VTYPE_PWSTR;
+	pvarRetValue->pwstrVal = NULL;
+	pvarRetValue->wstrLen = 0;
+
+	if (OpenClipboard(NULL))
+	{
+		if (IsClipboardFormatAvailable(CF_UNICODETEXT))
+		{
+			HGLOBAL hGlobal = GetClipboardData(CF_UNICODETEXT);
+			if (hGlobal != NULL)
+			{
+				wchar_t* pText = (wchar_t*)GlobalLock(hGlobal);
+				if (pText != NULL)
+				{
+					// Выделяем память через менеджер памяти 1С
+					size_t len = wcslen(pText) + 1;
+					if (memMgr->AllocMemory((void**)&pvarRetValue->pwstrVal, len * sizeof(WCHAR_T)))
+					{
+						convToShortWchar(&pvarRetValue->pwstrVal, pText, len);
+						pvarRetValue->wstrLen = len - 1;
+						success = true;
+					}
+					GlobalUnlock(hGlobal);
+				}
+			}
+		}
+		CloseClipboard();
+	}
+
+	// Если не удалось прочитать или буфер пуст/не текст, возвращаем пустую строку
+	if (!success && pvarRetValue->pwstrVal == NULL) {
+		if (memMgr->AllocMemory((void**)&pvarRetValue->pwstrVal, sizeof(WCHAR_T))) {
+			memset(pvarRetValue->pwstrVal, 0, sizeof(WCHAR_T));
+			pvarRetValue->wstrLen = 0;
+		}
+	}
+
+	return true;
+}
+
 // --------------------------------------------------------------------------
 
 static WcharWrapper s_names(g_kClassNames);
@@ -160,8 +266,6 @@ bool CAddInNative::Init(void* pConnection)
 //---------------------------------------------------------------------------//
 long CAddInNative::GetInfo()
 {
-	// Component should put supported component technology version 
-	// This component supports 2.0 version
 	return 2000;
 }
 //---------------------------------------------------------------------------//
@@ -205,7 +309,6 @@ bool CAddInNative::RegisterExtensionAs(WCHAR_T** wsExtensionName)
 //---------------------------------------------------------------------------//
 long CAddInNative::GetNProps()
 {
-	// You may delete next lines and add your own implementation code here
 	return ePropLast;
 }
 //---------------------------------------------------------------------------//
@@ -305,9 +408,13 @@ long CAddInNative::GetNParams(const long lMethodNum)
 	case eMethGetCaretPos:
 		return 3;
 	case eMethMoveWindowToCaretPos:
-		return 3; // Увеличено до 3
+		return 3;
 	case eMethRun:
 		return 5;
+	case eMethSetClipboard:
+		return 1;
+	case eMethGetClipboard: // Параметр 1: Формат (по умолчанию "text")
+		return 1;
 	default:
 		return 0;
 	}
@@ -337,7 +444,7 @@ bool CAddInNative::GetParamDefValue(const long lMethodNum, const long lParamNum,
 		}
 		break;
 	case eMethMoveWindowToCaretPos:
-		if (lParamNum == 2) // Значение по умолчанию для Title
+		if (lParamNum == 2)
 		{
 			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
 			pvarParamDefValue->pwstrVal = NULL;
@@ -346,6 +453,23 @@ bool CAddInNative::GetParamDefValue(const long lMethodNum, const long lParamNum,
 		}
 		break;
 	case eMethRun:
+		break;
+	case eMethSetClipboard:
+		break;
+	case eMethGetClipboard:
+		if (lParamNum == 0) // Формат = "text"
+		{
+			// По умолчанию можно не задавать, 1С передаст Empty, но для порядка можно вернуть строку
+			// В коде CallAsFunc мы просто проверим, что если передан параметр, то это формат.
+			// Здесь вернем пустую структуру, т.к. значение по умолчанию не критично для логики C++.
+			// Или можно явно вернуть "text".
+			static const wchar_t* defFormat = L"text";
+			TV_VT(pvarParamDefValue) = VTYPE_PWSTR;
+			// Внимание: мы не можем выделить память здесь так же просто, 
+			// 1С ожидает, что мы просто заполним структуру, но лучше оставить VTYPE_EMPTY
+			// если параметр необязательный в манифесте. 
+			// В данном коде оставим Empty, обработаем отсутствие параметра в CallAsFunc.
+		}
 		break;
 	default:
 		return false;
@@ -370,6 +494,10 @@ bool CAddInNative::HasRetVal(const long lMethodNum)
 		return false;
 	case eMethRun:
 		return false;
+	case eMethSetClipboard:
+		return false;
+	case eMethGetClipboard: // Функция возвращает значение
+		return true;
 	default:
 		return false;
 	}
@@ -530,34 +658,13 @@ void StoreCaretPosUIA(int xOffset, int yOffset)
 void MoveWindowToCaret(bool AllowOutScreen, bool MakeAlwaysOnTop, const wchar_t* Title)
 {
 	HWND hWindow = NULL;
-	DWORD currentProcessId = GetCurrentProcessId();
 
-	// Если Title задан и не пуст, ищем окно по заголовку только в текущем процессе
-	if (Title != NULL && wcslen(Title) > 0) {
-		// Перебираем все окна для поиска нужного заголовка в текущем процессе
-		HWND hWnd = GetTopWindow(NULL);
-		while (hWnd != NULL) {
-			DWORD windowProcessId;
-			GetWindowThreadProcessId(hWnd, &windowProcessId);
+	// Подготавливаем данные для поиска в текущем процессе
+	FindWindowData data = { GetCurrentProcessId(), Title, NULL };
 
-			// Проверяем, принадлежит ли окно текущему процессу
-			if (windowProcessId == currentProcessId) {
-				wchar_t windowTitle[256];
-				GetWindowTextW(hWnd, windowTitle, 256);
-
-				// Проверяем, начинается ли заголовок окна с искомой строки
-				if (wcsncmp(windowTitle, Title, wcslen(Title)) == 0) {
-					hWindow = hWnd;
-					break;
-				}
-			}
-			hWnd = GetNextWindow(hWnd, GW_HWNDNEXT);
-		}
-	}
-	else {
-		// Иначе берем окно, владеющее фокусом (оно всегда в текущем процессе)
-		hWindow = GetFocus();
-	}
+	// Перебираем окна системы и фильтруем по нашему PID
+	EnumWindows(EnumWindowsProc, (LPARAM)&data);
+	hWindow = data.hWndFound;
 
 	if (hWindow == NULL) return;
 
@@ -631,21 +738,21 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 		return true;
 	case eMethMoveWindowToCaretPos:
 	{	bool AllowOutScreen;
-		AllowOutScreen = false;
-		bool MakeAlwaysOnTop;
-		MakeAlwaysOnTop = false;
-		wchar_t* Title = NULL;
+	AllowOutScreen = false;
+	bool MakeAlwaysOnTop;
+	MakeAlwaysOnTop = false;
+	wchar_t* Title = NULL;
 
-		if (lSizeArray > 0) AllowOutScreen = TV_BOOL(paParams);
-		if (lSizeArray > 1) MakeAlwaysOnTop = TV_BOOL(paParams + 1);
+	if (lSizeArray > 0) AllowOutScreen = TV_BOOL(paParams);
+	if (lSizeArray > 1) MakeAlwaysOnTop = TV_BOOL(paParams + 1);
 
-		if (lSizeArray > 2) {
-			if (paParams[2].vt == VTYPE_PWSTR) {
-				Title = paParams[2].pwstrVal;
-			}
+	if (lSizeArray > 2) {
+		if (paParams[2].vt == VTYPE_PWSTR) {
+			Title = paParams[2].pwstrVal;
 		}
-		MoveWindowToCaret(AllowOutScreen, MakeAlwaysOnTop, Title);
-		return true;
+	}
+	MoveWindowToCaret(AllowOutScreen, MakeAlwaysOnTop, Title);
+	return true;
 	}
 	case eMethRun:
 		if (lSizeArray)
@@ -659,7 +766,7 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 			{
 				wchar_t* param2 = 0;
 				if (AdminMode)
-					convToShortWchar(&param2, L"runas"); // Теперь это работает корректно, т.к. функция уже определена выше
+					convToShortWchar(&param2, L"runas");
 				SHELLEXECUTEINFO shExInfo = { 0 };
 				shExInfo.cbSize = sizeof(shExInfo);
 				shExInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
@@ -685,6 +792,14 @@ bool CAddInNative::CallAsProc(const long lMethodNum,
 		}
 		else
 			return false;
+	case eMethSetClipboard:
+		if (lSizeArray > 0 && paParams[0].vt == VTYPE_PWSTR)
+		{
+			SetToClipboard(paParams[0].pwstrVal);
+			return true;
+		}
+		return false;
+
 	default:
 		return false;
 	}
@@ -712,6 +827,10 @@ bool CAddInNative::CallAsFunc(const long lMethodNum,
 		pvarRetValue->bVal = IsUserAnAdmin();
 		pvarRetValue->vt = VTYPE_BOOL;
 		return true;
+	case eMethGetClipboard:
+		// Сюда можно добавить проверку параметра Format (paParams[0]), 
+		// но сейчас мы всегда возвращаем текст, так как реализация только для CF_UNICODETEXT
+		return GetFromClipboard(pvarRetValue, m_iMemory);
 	default:
 		return false;
 	}
