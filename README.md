@@ -1,5 +1,5 @@
 <pre>Внешняя компонента для платформы Windows для 1С общего назначения по технологии Native на C++ в формате Visual Studio 2015. 
-Скачать релиз можно тут http://devtool1c.ucoz.ru/load/prochie/iskhodnyj_kod_vneshnej_komponenty_obshhego_naznachenija/2-1-0-13 .
+Описание компоненты внутри ИР http://devtool1c.ucoz.ru/load/prochie/iskhodnyj_kod_vneshnej_komponenty_obshhego_naznachenija/2-1-0-13 .
 Доступные функции:
     PID() - Число - получает идентификатор текущего процесса
     Sleep(Число КоличествоМилисекунд) - выполняет паузу
